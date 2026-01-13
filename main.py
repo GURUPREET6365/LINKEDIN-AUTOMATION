@@ -3,8 +3,12 @@ import pyautogui
 import time
 import pyperclip
 import json
+from dotenv import load_dotenv
 from datetime import datetime
+from google import genai
+import os
 
+load_dotenv()
 
 
 # first = coordinates[0]['start_job_page']['x']
@@ -54,6 +58,9 @@ class jobFinder:
         pyautogui.click(x=632, y=381)
         time.sleep(0.7)
     
+
+
+
     def is_url_exists(self):
         pyautogui.moveTo(x=630, y=319)
         pyautogui.click()
@@ -137,7 +144,6 @@ class jobFinder:
 
         # print('printing the lenght of the data...')
         
-       
         text = {
             'id':length,
             'url':self.url,
@@ -150,7 +156,6 @@ class jobFinder:
         # Now dumping the file...
         with open('raw_data.json', 'w', encoding='utf-8') as to_save_file:
             json.dump(self.file, to_save_file, indent=2, ensure_ascii=False)
-
 
 
     def scroll(self):
@@ -178,7 +183,6 @@ class jobFinder:
 
             pyautogui.moveTo(x=630, y=319)
             pyautogui.click()
-
             """
             Above I am clicking this because when new pages are loaded then i doest not go to the top from where it had to select.
             """
@@ -188,9 +192,184 @@ class jobFinder:
 
             self.main()
 
+    
+    def is_url_exists_in_information_json(self):
+        try:
+            with open('raw_data.json', 'r', encoding="utf-8") as reading_file:
+                self.url_stored_file = json.load(reading_file)
+                """
+                This is the file where raw data is stored with it's url and now i am going to give them url.
+                """
+        
+        except FileNotFoundError:
+            print('File not found.')
+            return False
+        except Exception as error:
+            print('The error found is:', error)
+            return False
+        
+        try:
+            with open('information.json', 'r', encoding="utf-8") as reading_file:
+                self.url_checking_file = json.load(reading_file)
+
+                """
+                This is the file where the new data will stored.
+                """
+
+        except FileNotFoundError:
+            print('File not found.')
+            return False
+        except Exception as error:
+            print('The error found is:', error)
+            return False
+        
+        if not self.url_stored_file['jobs']:
+            print('The raw_data.json file is null.')
+            return False
+        
+        elif not self.url_checking_file['jobs_information']:
+            self.url_to_give_to_ai = []
+            print(self.url_checking_file['jobs_information'])
+            print('The information.json file is null.')
+            self.url_to_give_to_ai = []
+            for raw_data_url in self.url_stored_file['jobs']:
+                old_url = raw_data_url['url']
+                self.url_to_give_to_ai.append(old_url)
+            return True
+
+        else:
             
-job = jobFinder()
-job.main()
+            url_in_information_json =[ item['url'] for item in self.url_checking_file['jobs_information']]
+
+            """
+            This is the form of the loop liek:
+            for item in self.url_checking_file['jobs_information']:
+                item['url']
+            """
+
+            self.url_to_give_to_ai = []
+            for raw_data_url in self.url_stored_file['jobs']:
+                old_url = raw_data_url['url']
+                if old_url not in url_in_information_json:
+                    self.url_to_give_to_ai.append(old_url)
+
+                
+                
+            return True
+                    
+
+    def ai_Models(self):
+        all_models = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite','gemini-3-flash']
+
+        all_api_key = [f'{os.getenv('GEMINI_API_KEY2')}', f'{os.getenv('GEMINI_API_KEY1')}', f'{os.getenv('GEMINI_API_KEY3')}']
+
+        for json in self.url_stored_file['jobs']:
+            if json['url'] in self.url_to_give_to_ai:
+
+                for model in all_models:
+                    
+                    for api in all_api_key:
+                        print(api)
+                        client = genai.Client(api_key=api)
+                        
+                        try:
+                            response = client.models.generate_content(
+                                model=f"{model}", contents=f"""You are an information extraction system.
+
+                                    Your task is to extract structured data from the given job description.
+
+                                    STRICT RULES:
+                                    - Return ONLY valid JSON.
+                                    - Do NOT include explanations, comments, markdown, or extra text.
+                                    - Do NOT hallucinate information.
+                                    - If a field is not explicitly present, use null.
+                                    - Skills must be a list of strings.
+                                    - Keep values concise and factual.
+
+                                    INPUTS:
+                                    1) Job description text
+                                    2) Extraction timestamp (ISO 8601 format)
+
+                                    FIELDS TO EXTRACT:
+                                    - company_name
+                                    - company_address
+                                    - posted_days_ago
+                                    - skills (list)
+
+                                    JOB DESCRIPTION:
+                                    {json['raw_text']}"""
+                                    )
+                            
+                            if response.text:
+                                print('found the response from ai that is')
+                                # Now i am checking that the ai response is, is json or not.
+                                strip_text = self.clean_ai_json(response.text)
+                                is_valid_data, data = self.is_json_response(strip_text)
+                                if is_valid_data:
+                                        data["id"] = json['id']
+                                        data["url"] = json["url"]
+                                        data["timestamp"] = json["timestamp"]
+                                        data["extracted_at"] = datetime.now().isoformat()
+
+                                        self.save_ai_response_into_information_file(data)     
+                                        time.sleep(38)     
+                                        break                         
+
+                        except Exception as error:
+                            print('The error is:', error)
+                            time.sleep(38)
+                            continue
 
 
+    def clean_ai_json(self, text) -> str:
+        text = text.strip()
+
+        # Remove ```json or ```
+        if text.startswith("```"):
+            text = text.strip("`")
+            text = text.replace("json", "", 1).strip()
+
+        return text
+
+
+                    
+    def is_json_response(self, text):
+        try:
+            data=json.loads(text)
+            return True, data
+        # Here i am returning two data so the python will return tuples.
+        except json.JSONDecodeError:
+            return False, None
+
+
+    def save_ai_response_into_information_file(self, data):
+        try:
+            with open('information.json', 'r', encoding="utf-8") as reading_file:
+                self.information_json = json.load(reading_file)
+
+                """
+                This is the file where the new data will stored.
+                """
+
+                self.information_json['jobs_information'].append(data)
+
+                with open('information.json', 'w', encoding='utf-8') as to_save_file:
+                    json.dump(self.information_json, to_save_file, indent=2, ensure_ascii=False)
+
+        except FileNotFoundError:
+            print('File not found.')
+            return False
+        except Exception as error:
+            print('The error found is:', error)
+            return False
+
+    def ai_process(self):
+        if self.is_url_exists_in_information_json():
+            self.ai_Models()
+
+
+# job = jobFinder()
+# job.main()
+
+# job.ai_process()
 
